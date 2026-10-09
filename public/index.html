@@ -12,6 +12,7 @@ canvas{display:block}
 #menu input,#menu select{background:#222c3d;color:#fff}
 #menu button{background:#ff7a2f;color:#fff;font-weight:700}
 #menu button.alt{background:#2f6bff}
+#modeDesc{color:#9fb0c8;font-size:13px;text-align:center;width:min(320px,100%)}
 #msg{color:#ffb4b4;min-height:20px;font-size:14px}
 .hud{position:fixed;pointer-events:none;z-index:5}
 #hp{left:12px;top:10px;font-size:18px;font-weight:700;text-shadow:0 1px 3px #000}
@@ -27,19 +28,17 @@ canvas{display:block}
 #bFire{right:24px;bottom:70px;width:84px;height:84px}
 #bJump{right:120px;bottom:30px;width:60px;height:60px;background:#2f6bff99}
 #bRel{right:120px;bottom:100px;width:60px;height:60px;background:#3a3a3a99}
-#bSwap{right:190px;bottom:30px;width:60px;height:60px;background:#7a3fd099}
-#bAim{right:190px;bottom:100px;width:60px;height:60px;background:#1a9a6a99}
-#bPause{left:24px;bottom:170px;width:46px;height:46px;background:#0008;font-size:18px}
-#pause{position:fixed;inset:0;background:#000c;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:10;padding:16px}
-#pause *{width:min(300px,100%);padding:10px;font-size:16px;border-radius:10px;border:0}
-#pause button{background:#ff7a2f;color:#fff;font-weight:700}
-#pause select{background:#222c3d;color:#fff}
 </style></head><body>
 <div id="menu">
   <h1>FPS MOBILE</h1>
   <input id="name" maxlength="14" placeholder="Seu nome">
-  <select id="mode"><option value="ffa">Cada um por si</option><option value="team">Equipes (vermelho x azul)</option></select>
-  <select id="max"><option>2</option><option>4</option><option selected>6</option><option>8</option></select>
+  <select id="mode">
+    <option value="dm">Mata-mata (todos contra todos)</option>
+    <option value="x1">X1 (1 contra 1)</option>
+    <option value="squad">Squad (equipes)</option>
+  </select>
+  <div id="modeDesc"></div>
+  <select id="max"></select>
   <button id="bCreate">Criar sala</button>
   <input id="code" maxlength="5" placeholder="Código da sala" style="text-transform:uppercase">
   <button id="bJoin" class="alt">Entrar em sala</button>
@@ -48,8 +47,7 @@ canvas{display:block}
 <div class="hud" id="hp"></div><div class="hud" id="ammo"></div><div class="hud" id="cross"></div>
 <div class="hud" id="board"></div><div class="hud" id="feed"></div><div class="hud" id="info"></div><div class="hud" id="red"></div>
 <div id="joy"><div id="knob"></div></div>
-<div class="btn" id="bFire">ATIRAR</div><div class="btn" id="bJump">PULAR</div><div class="btn" id="bRel">RECARR.</div><div class="btn" id="bSwap">TROCAR</div><div class="btn" id="bAim">MIRAR</div><div class="btn" id="bPause">☰</div>
-<div id="pause"><h2 style="margin:0;width:auto">Pausa</h2><label>Sensibilidade<input id="sens" type="range" min="0.3" max="2.5" step="0.1" value="1"></label><label>Gráficos<select id="qual"><option value="low">Leve (celular fraco)</option><option value="mid" selected>Médio</option><option value="high">Alto</option></select></label><button id="bResume">Continuar</button><button id="bLeave" style="background:#555">Sair da sala</button></div>
+<div class="btn" id="bFire">ATIRAR</div><div class="btn" id="bJump">PULAR</div><div class="btn" id="bRel">RECARR.</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="/socket.io/socket.io.js"></script>
@@ -58,44 +56,138 @@ const $ = id => document.getElementById(id);
 const sock = io();
 $('name').value = localStorage.nome || '';
 const qs = new URLSearchParams(location.search); if (qs.get('sala')) $('code').value = qs.get('sala');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ---------- Modos ----------
+// x1 e mata-mata usam o modo "ffa" do servidor; squad usa "team" (vermelho x azul)
+const MODES = {
+  dm: { label: 'Mata-mata', srv: 'ffa', sizes: [4, 6, 8], desc: 'Todo mundo contra todo mundo. Cada um por si!' },
+  x1: { label: 'X1', srv: 'ffa', sizes: [2], desc: 'Duelo 1 contra 1. Sala com 2 jogadores.' },
+  squad: { label: 'Squad', srv: 'team', sizes: [4, 6, 8], desc: 'Equipes vermelho x azul. Jogue em squad!' }
+};
+let chosen = '';
+function fillMode() {
+  const k = $('mode').value, m = MODES[k];
+  $('max').innerHTML = m.sizes.map(n => `<option value="${n}"${n === 6 || m.sizes.length === 1 ? ' selected' : ''}>${n} jogadores${k === 'squad' ? ` (${n / 2}x${n / 2})` : ''}</option>`).join('');
+  $('max').style.display = m.sizes.length > 1 ? '' : 'none';
+  $('modeDesc').textContent = m.desc;
+}
+$('mode').onchange = fillMode; fillMode();
 
 let inRoom = false, roomCode = '', myId = '', boxes = [], myTeam = -1, mode = 'ffa';
-let hp = 100, dead = false, reloading = false, lastShot = 0, snap = [], cur = 0, aim = false, sens = +(localStorage.sens || 1), paused = false;
-const WEAP = [{ n: 'Pistola', mag: 12, rate: 150, c: 0x222222, s: [0.1, 0.12, 0.4], f: 120 }, { n: 'Rifle', mag: 30, rate: 110, c: 0x3a4a2a, s: [0.1, 0.12, 0.75], f: 90 }, { n: 'SMG', mag: 40, rate: 70, c: 0x2a2a55, s: [0.1, 0.14, 0.5], f: 150 }];
-const ammos = [12, 30, 40];
+let hp = 100, dead = false, ammo = 12, reloading = false, lastShot = 0, snap = [];
 const P = { x: 0, y: 0, z: 0, vy: 0, yaw: 0, pitch: 0 };
 let jx = 0, jy = 0, firing = false;
+const MAPH = 80; // metade do tamanho jogável do mapa (antes era 40)
 
 // ---------- Cena ----------
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'low-power' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 renderer.setSize(innerWidth, innerHeight); document.body.prepend(renderer.domElement);
-const scene = new THREE.Scene(); scene.background = new THREE.Color(0x87b7e0); scene.fog = new THREE.Fog(0x87b7e0, 20, 70);
-const cam = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 100); cam.rotation.order = 'YXZ';
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x87b7e0); scene.fog = new THREE.Fog(0x87b7e0, 60, 230);
+const cam = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 400); cam.rotation.order = 'YXZ';
 scene.add(new THREE.HemisphereLight(0xffffff, 0x556655, 1));
 const sun = new THREE.DirectionalLight(0xffffff, 0.6); sun.position.set(10, 20, 5); scene.add(sun);
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshLambertMaterial({ color: 0x4d7a45 }));
-ground.rotation.x = -Math.PI / 2; scene.add(ground);
 addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); });
-// arma na mão
-const gun = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 0.5), new THREE.MeshLambertMaterial({ color: 0x222222 }));
-gun.position.set(0.25, -0.22, -0.5); cam.add(gun); scene.add(cam);
+scene.add(cam);
 
+// ---------- Texturas (geradas por código) ----------
+const aniso = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+const rng = s => () => (s = s * 16807 % 2147483647) / 2147483647;
+function mkTex(draw) {
+  const c = document.createElement('canvas'); c.width = c.height = 256; draw(c.getContext('2d'));
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = aniso; return t;
+}
+function rr(x, a, b, w, h, r) { x.beginPath(); x.moveTo(a + r, b); x.arcTo(a + w, b, a + w, b + h, r); x.arcTo(a + w, b + h, a, b + h, r); x.arcTo(a, b + h, a, b, r); x.arcTo(a, b, a + w, b, r); x.closePath(); }
+const grassTex = mkTex(x => {
+  x.fillStyle = '#4a7a42'; x.fillRect(0, 0, 256, 256);
+  for (const ox of [-256, 0, 256]) for (const oy of [-256, 0, 256]) {
+    const r = rng(7); x.save(); x.translate(ox, oy);
+    for (let i = 0; i < 10; i++) { x.fillStyle = `rgba(${60 + r() * 30 | 0},${110 + r() * 40 | 0},50,.18)`; x.beginPath(); x.arc(r() * 256, r() * 256, 10 + r() * 28, 0, 6.3); x.fill(); }
+    for (let i = 0; i < 350; i++) { const a = r() * 256, b = r() * 256; x.strokeStyle = `rgba(${40 + r() * 50 | 0},${100 + r() * 80 | 0},40,.7)`; x.beginPath(); x.moveTo(a, b); x.lineTo(a + (r() - .5) * 4, b - 3 - r() * 6); x.stroke(); }
+    x.restore();
+  }
+});
+const stoneTex = mkTex(x => {
+  x.fillStyle = '#5f574d'; x.fillRect(0, 0, 256, 256);
+  for (let row = 0; row < 8; row++) for (let c = -1; c < 5; c++) {
+    const r = rng(row * 31 + ((c % 4 + 4) % 4) * 7 + 1), s = 118 + r() * 40, bx = c * 64 + (row % 2) * 32 + 2, by = row * 32 + 2;
+    x.fillStyle = `rgb(${s | 0},${s - 8 | 0},${s - 18 | 0})`; rr(x, bx, by, 60, 28, 7); x.fill();
+    x.fillStyle = 'rgba(255,255,255,.1)'; rr(x, bx + 3, by + 2, 54, 5, 2); x.fill();
+    for (let i = 0; i < 8; i++) { x.fillStyle = 'rgba(0,0,0,.1)'; x.beginPath(); x.arc(bx + 4 + r() * 52, by + 4 + r() * 20, 1 + r() * 1.5, 0, 6.3); x.fill(); }
+  }
+});
+const woodTex = mkTex(x => {
+  for (let i = 0; i < 4; i++) {
+    const r = rng(i + 1), s = r();
+    x.fillStyle = `rgb(${150 + s * 30 | 0},${105 + s * 20 | 0},${55 + s * 15 | 0})`; x.fillRect(i * 64, 0, 64, 256);
+    for (let j = 0; j < 12; j++) { x.strokeStyle = 'rgba(60,35,10,.25)'; x.lineWidth = 1; const gx = i * 64 + 4 + r() * 56; x.beginPath(); x.moveTo(gx, 0); x.quadraticCurveTo(gx + (r() - .5) * 8, 128, gx, 256); x.stroke(); }
+    x.fillStyle = 'rgba(60,35,10,.45)'; x.beginPath(); x.ellipse(i * 64 + 14 + r() * 36, 40 + r() * 170, 5, 8, 0, 0, 6.3); x.fill();
+    x.fillStyle = '#3a3a3a'; for (const ny of [12, 244]) { x.beginPath(); x.arc(i * 64 + 32, ny, 3, 0, 6.3); x.fill(); }
+    x.strokeStyle = 'rgba(40,22,8,.8)'; x.lineWidth = 3; x.beginPath(); x.moveTo(i * 64, 0); x.lineTo(i * 64, 256); x.stroke();
+  }
+});
+
+// ---------- Chão, colinas e árvores ----------
+grassTex.repeat.set(120, 120);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), new THREE.MeshLambertMaterial({ map: grassTex }));
+ground.rotation.x = -Math.PI / 2; scene.add(ground);
+{
+  const hm = new THREE.MeshLambertMaterial({ color: 0x3f6a3a }), hg = new THREE.SphereGeometry(1, 14, 8);
+  for (let i = 0; i < 14; i++) { const a = i / 14 * 6.283, d = 150 + Math.random() * 20, h = new THREE.Mesh(hg, hm); h.scale.set(30 + Math.random() * 20, 12 + Math.random() * 10, 30 + Math.random() * 20); h.position.set(Math.cos(a) * d, -2, Math.sin(a) * d); scene.add(h); }
+  const tg = new THREE.CylinderGeometry(.25, .35, 3, 8), lg = new THREE.ConeGeometry(1.8, 5, 10), tm = new THREE.MeshLambertMaterial({ color: 0x6b4a2b }), lm = new THREE.MeshLambertMaterial({ color: 0x2f6a35 });
+  for (let n = 0; n < 60;) { const x = (Math.random() - .5) * 2 * (MAPH + 45), z = (Math.random() - .5) * 2 * (MAPH + 45); if (Math.max(Math.abs(x), Math.abs(z)) < MAPH + 6) continue; const a = new THREE.Mesh(tg, tm), b = new THREE.Mesh(lg, lm); a.position.set(x, 1.5, z); b.position.set(x, 5.2, z); scene.add(a, b); n++; }
+}
+
+// ---------- Formas arredondadas ----------
+const M = c => new THREE.MeshLambertMaterial({ color: c });
+const SP = (r, s = 12) => new THREE.SphereGeometry(r, s, s - 2), CY = (a, b, h, s = 10) => new THREE.CylinderGeometry(a, b, h, s);
+function mesh(g, m, x = 0, y = 0, z = 0, rx = 0) { const o = new THREE.Mesh(g, m); o.position.set(x, y, z); o.rotation.x = rx; return o; }
+
+// caixa com cantos arredondados, UV alinhada ao mundo (textura contínua entre blocos)
+function roundedBox(w, h, d, r, c, tile) {
+  const g = new THREE.BoxGeometry(2, 2, 2, 6, 6, 6), P_ = g.attributes.position, N = g.attributes.normal, U = g.attributes.uv, H = [w / 2, h / 2, d / 2];
+  r = Math.min(r, Math.min(...H) * .9); const I = H.map(v => v - r);
+  const mp = (v, i, hh) => { const a = Math.abs(v); return Math.sign(v) * (a < .2 ? 0 : a < .5 ? i : a < .85 ? i + r * .55 : hh); };
+  for (let k = 0; k < P_.count; k++) {
+    const ax = Math.abs(N.getX(k)) > .5 ? 0 : Math.abs(N.getY(k)) > .5 ? 1 : 2;
+    const p = [mp(P_.getX(k), I[0], H[0]), mp(P_.getY(k), I[1], H[1]), mp(P_.getZ(k), I[2], H[2])];
+    const q = p.map((v, i) => Math.max(-I[i], Math.min(I[i], v))), dd = p.map((v, i) => v - q[i]), l = Math.hypot(...dd);
+    if (l > 1e-6) { const n = dd.map(v => v / l); P_.setXYZ(k, q[0] + n[0] * r, q[1] + n[1] * r, q[2] + n[2] * r); N.setXYZ(k, ...n); } else P_.setXYZ(k, ...p);
+    const wp = [P_.getX(k) + c[0], P_.getY(k) + c[1], P_.getZ(k) + c[2]], uv = ax === 0 ? [wp[2], wp[1]] : ax === 1 ? [wp[0], wp[2]] : [wp[0], wp[1]];
+    U.setXY(k, uv[0] / tile, uv[1] / tile);
+  }
+  return g;
+}
 function buildMap() {
-  boxes.forEach((b, i) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(b[3], b[4], b[5]), new THREE.MeshLambertMaterial({ color: b[4] > 3 ? 0x8a7f72 : 0xa0733c }));
+  boxes.forEach(b => {
+    const tall = b[4] > 3;
+    const m = new THREE.Mesh(roundedBox(b[3], b[4], b[5], tall ? Math.min(.8, .25 * Math.min(b[3], b[5])) : .3, b, tall ? 3 : 2), new THREE.MeshLambertMaterial({ map: tall ? stoneTex : woodTex }));
     m.position.set(b[0], b[1], b[2]); scene.add(m);
   });
 }
+
+// arma redonda (cilindros + esferas), usada na mão e nos outros jogadores
+function makeGun() {
+  const g = new THREE.Group(), d = M(0x2b2b2b), m = M(0x5a5a5a), h = Math.PI / 2;
+  g.add(mesh(CY(.05, .05, .34), d, 0, 0, 0, h), mesh(CY(.022, .022, .32, 8), m, 0, .01, -.32, h), mesh(CY(.032, .032, .07, 8), m, 0, .01, -.5, h),
+    mesh(CY(.035, .03, .16), d, 0, -.1, .08, -.25), mesh(CY(.03, .03, .15), m, 0, -.1, -.06), mesh(SP(.05, 8), d, 0, 0, .2), mesh(SP(.02, 6), m, 0, .06, -.05));
+  g.children[5].scale.z = 2; return g;
+}
+const gun = makeGun(); gun.position.set(0.25, -0.22, -0.5); cam.add(gun);
+
 const others = {};
 const teamCol = t => t === 0 ? 0xe03030 : t === 1 ? 0x3060e0 : 0xe08a30;
+function makePlayer(col) {
+  const g = new THREE.Group(), sk = M(0xf0c8a0), tm = M(col), dk = M(0x2a2f3a);
+  for (const s of [-1, 1]) g.add(mesh(CY(.1, .085, .62), dk, s * .14, .38, 0), mesh(SP(.11, 8), dk, s * .14, .08, -.04));
+  const t = mesh(SP(.3, 14), tm, 0, 1, 0); t.scale.set(1, 1.25, .75);
+  g.add(t, mesh(SP(.2, 14), sk, 0, 1.55, 0), mesh(new THREE.SphereGeometry(.215, 14, 8, 0, 6.283, 0, 1.571), tm, 0, 1.57, 0));
+  for (const s of [-1, 1]) { const a = new THREE.Group(); a.position.set(s * .34, 1.22, 0); a.rotation.order = 'YXZ'; a.rotation.set(1.3, s * .55, 0); a.add(mesh(CY(.08, .07, .55), tm, 0, -.27, 0)); g.add(a); }
+  const gn = makeGun(); gn.position.set(0, 1.08, -.4); g.add(gn); return g;
+}
 function getOther(p) {
-  if (!others[p.id]) {
-    const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.2, 0.4), new THREE.MeshLambertMaterial({ color: teamCol(p.t) })); body.position.y = 0.7;
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), new THREE.MeshLambertMaterial({ color: 0xf0c8a0 })); head.position.y = 1.55;
-    g.add(body, head); g.userData.tx = p.x; g.userData.tz = p.z; scene.add(g); others[p.id] = g;
-  }
+  if (!others[p.id]) { const g = makePlayer(teamCol(p.t)); g.userData.tx = p.x; g.userData.tz = p.z; scene.add(g); others[p.id] = g; }
   return others[p.id];
 }
 
@@ -106,12 +198,13 @@ function start(r) {
   inRoom = true; roomCode = r.code; myId = r.id; boxes = r.boxes; myTeam = r.team; mode = r.mode;
   P.x = r.x; P.z = r.z; P.y = 0; hp = 100; dead = false;
   if (first) buildMap();
+  const label = mode === 'team' ? 'Squad' : (chosen === 'x1' || r.max === 2) ? 'X1' : 'Mata-mata';
   $('menu').style.display = 'none';
-  $('info').textContent = `Sala ${r.code} • toque p/ copiar convite`;
+  $('info').textContent = `Sala ${r.code} • ${label} • toque p/ copiar convite`;
   localStorage.nome = $('name').value;
 }
-$('bCreate').onclick = () => sock.emit('create', { name: $('name').value, mode: $('mode').value, max: $('max').value }, start);
-$('bJoin').onclick = () => sock.emit('join', { name: $('name').value, code: $('code').value }, start);
+$('bCreate').onclick = () => { chosen = $('mode').value; sock.emit('create', { name: $('name').value, mode: MODES[chosen].srv, max: $('max').value }, start); };
+$('bJoin').onclick = () => { chosen = ''; sock.emit('join', { name: $('name').value, code: $('code').value }, start); };
 $('info').style.pointerEvents = 'auto';
 $('info').onclick = () => { const l = `${location.origin}/?sala=${roomCode}`; (navigator.share ? navigator.share({ title: 'FPS', text: 'Entra na minha sala!', url: l }) : navigator.clipboard.writeText(l)).catch(() => { }); };
 // reconexão: reentra na sala automaticamente
@@ -124,9 +217,11 @@ sock.on('snap', s => {
     const g = getOther(p); g.userData.tx = p.x; g.userData.ty = p.y; g.userData.tz = p.z; g.rotation.y = p.r; g.visible = p.hp > 0;
   }
   for (const id in others) if (!ids[id]) { scene.remove(others[id]); delete others[id]; }
-  const me = s.find(p => p.id === myId);
-  const list = [...s].sort((a, b) => b.k - a.k).map(p => `<div style="color:#${teamCol(p.t).toString(16).padStart(6, '0')}">${p.n}${p.id === myId ? ' (você)' : ''} ${p.k}/${p.d}</div>`).join('');
-  $('board').innerHTML = '<b>Placar (K/M)</b>' + list;
+  const list = [...s].sort((a, b) => b.k - a.k).map(p => `<div style="color:#${teamCol(p.t).toString(16).padStart(6, '0')}">${esc(p.n)}${p.id === myId ? ' (você)' : ''} ${p.k}/${p.d}</div>`).join('');
+  let head = '<b>Placar (K/M)</b>';
+  if (mode === 'team') { const a = s.filter(p => p.t === 0).reduce((n, p) => n + p.k, 0), b = s.filter(p => p.t === 1).reduce((n, p) => n + p.k, 0); head = `<b><span style="color:#e03030">Vermelho ${a}</span> x <span style="color:#6a90ff">${b} Azul</span></b>`; }
+  else if (s.length === 2) head = '<b>X1 (K/M)</b>';
+  $('board').innerHTML = head + list;
   $('hp').textContent = '❤ ' + Math.max(0, hp);
 });
 sock.on('shot', s => {
@@ -135,7 +230,7 @@ sock.on('shot', s => {
 });
 sock.on('hurt', h => { $('red').style.opacity = .5; setTimeout(() => $('red').style.opacity = 0, 150); if (h <= 0) { dead = true; $('hp').textContent = '☠ Respawn em 3s'; } });
 sock.on('hitmark', () => { $('cross').style.borderColor = '#f33'; setTimeout(() => $('cross').style.borderColor = '#fff8', 100); beep(900, .04); });
-sock.on('respawn', r => { P.x = r.x; P.z = r.z; P.y = 0; P.vy = 0; dead = false; ammos[0] = 12; ammos[1] = 30; ammos[2] = 40; updAmmo(); });
+sock.on('respawn', r => { P.x = r.x; P.z = r.z; P.y = 0; P.vy = 0; dead = false; ammo = 12; updAmmo(); });
 sock.on('feed', t => { const d = document.createElement('div'); d.textContent = t; $('feed').appendChild(d); setTimeout(() => d.remove(), 4000); });
 
 // ---------- Som ----------
@@ -145,41 +240,32 @@ let ac; function beep(f, d) { try { ac = ac || new (window.AudioContext || windo
 const joy = $('joy'), knob = $('knob'); let joyId = null, lookId = null, lx = 0, ly = 0;
 function joyMove(t) { const r = joy.getBoundingClientRect(); let dx = t.clientX - (r.left + 65), dy = t.clientY - (r.top + 65); const m = Math.hypot(dx, dy), max = 55; if (m > max) { dx *= max / m; dy *= max / m; } knob.style.transform = `translate(${dx}px,${dy}px)`; jx = dx / max; jy = dy / max; }
 joy.addEventListener('touchstart', e => { e.preventDefault(); joyId = e.changedTouches[0].identifier; joyMove(e.changedTouches[0]); }, { passive: false });
-document.addEventListener('touchstart', e => { for (const t of e.changedTouches) { if (t.target.closest('#menu,.btn,#joy,#info,#pause')) continue; if (lookId === null && t.clientX > innerWidth / 2) { lookId = t.identifier; lx = t.clientX; ly = t.clientY; } } }, { passive: false });
+document.addEventListener('touchstart', e => { for (const t of e.changedTouches) { if (t.target.closest('#menu,.btn,#joy,#info')) continue; if (lookId === null && t.clientX > innerWidth / 2) { lookId = t.identifier; lx = t.clientX; ly = t.clientY; } } }, { passive: false });
 document.addEventListener('touchmove', e => {
-  if (!e.target.closest('#pause')) e.preventDefault();
+  e.preventDefault();
   for (const t of e.changedTouches) {
     if (t.identifier === joyId) joyMove(t);
-    if (t.identifier === lookId) { P.yaw -= (t.clientX - lx) * 0.006 * sens * (aim ? .55 : 1); P.pitch = Math.max(-1.4, Math.min(1.4, P.pitch - (t.clientY - ly) * 0.006 * sens * (aim ? .55 : 1))); lx = t.clientX; ly = t.clientY; }
+    if (t.identifier === lookId) { P.yaw -= (t.clientX - lx) * 0.006; P.pitch = Math.max(-1.4, Math.min(1.4, P.pitch - (t.clientY - ly) * 0.006)); lx = t.clientX; ly = t.clientY; }
   }
 }, { passive: false });
 document.addEventListener('touchend', e => { for (const t of e.changedTouches) { if (t.identifier === joyId) { joyId = null; jx = jy = 0; knob.style.transform = ''; } if (t.identifier === lookId) lookId = null; } });
 const hold = (id, on, off) => { const el = $(id); el.addEventListener('touchstart', e => { e.preventDefault(); on(); }, { passive: false }); el.addEventListener('touchend', e => { e.preventDefault(); off && off(); }); };
 hold('bFire', () => firing = true, () => firing = false);
 hold('bJump', () => { if (P.y <= groundH() + .01) P.vy = 7; });
-hold('bRel', reload); hold('bSwap', swap); hold('bAim', toggleAim);
-hold('bPause', () => { paused = true; firing = false; $('pause').style.display = 'flex'; });
-$('bResume').onclick = () => { paused = false; $('pause').style.display = 'none'; };
-$('bLeave').onclick = () => location.reload();
-$('sens').value = sens; $('sens').oninput = e => { sens = +e.target.value; localStorage.sens = sens; };
-function setQual(q) { renderer.setPixelRatio(q === 'low' ? 0.7 : q === 'mid' ? 1 : 1.5); renderer.setSize(innerWidth, innerHeight); scene.fog.far = q === 'low' ? 45 : 70; }
-$('qual').value = localStorage.qual || 'mid'; $('qual').onchange = e => { localStorage.qual = e.target.value; setQual(e.target.value); }; setQual($('qual').value);
-function applyGun() { gun.geometry.dispose(); gun.geometry = new THREE.BoxGeometry(...WEAP[cur].s); gun.material.color.setHex(WEAP[cur].c); }
-function swap() { cur = (cur + 1) % 3; reloading = false; applyGun(); updAmmo(); }
-function toggleAim() { aim = !aim; cam.fov = aim ? 45 : 75; cam.updateProjectionMatrix(); $('bAim').style.outline = aim ? '3px solid #fff' : ''; }
+hold('bRel', reload);
 // teclado/mouse para testar no PC
 const keys = {}; addEventListener('keydown', e => { keys[e.code] = 1; if (e.code === 'Space' && P.y <= groundH() + .01) P.vy = 7; if (e.code === 'KeyR') reload(); });
 addEventListener('keyup', e => keys[e.code] = 0);
 addEventListener('mousedown', () => { if (inRoom) firing = true; }); addEventListener('mouseup', () => firing = false);
 addEventListener('mousemove', e => { if (e.buttons & 2) { P.yaw -= e.movementX * .004; P.pitch = Math.max(-1.4, Math.min(1.4, P.pitch - e.movementY * .004)); } });
 
-function updAmmo() { $('ammo').textContent = reloading ? 'Recarregando...' : `${WEAP[cur].n} ${ammos[cur]}/${WEAP[cur].mag}`; }
-function reload() { const w = cur; if (reloading || ammos[w] === WEAP[w].mag) return; reloading = true; updAmmo(); setTimeout(() => { ammos[w] = WEAP[w].mag; if (cur === w) reloading = false; updAmmo(); }, 1300); }
+function updAmmo() { $('ammo').textContent = reloading ? 'Recarregando...' : `🔫 ${ammo}/12`; }
+function reload() { if (reloading || ammo === 12) return; reloading = true; updAmmo(); setTimeout(() => { ammo = 12; reloading = false; updAmmo(); }, 1200); }
 function shoot() {
-  const n = performance.now(); if (dead || reloading || paused || n - lastShot < WEAP[cur].rate) return; lastShot = n;
-  if (ammos[cur] <= 0) { reload(); return; }
-  ammos[cur]--; updAmmo(); beep(WEAP[cur].f, .08); gun.position.z = -0.42; if (cur === 0) firing = false;
-  sock.emit('shoot', { x: P.x, y: P.y, z: P.z, yaw: P.yaw, pitch: P.pitch, w: cur });
+  const n = performance.now(); if (dead || reloading || n - lastShot < 160) return; lastShot = n;
+  if (ammo <= 0) { reload(); return; }
+  ammo--; updAmmo(); beep(120, .08); gun.position.z = -0.42;
+  sock.emit('shoot', { x: P.x, y: P.y, z: P.z, yaw: P.yaw, pitch: P.pitch });
 }
 
 // ---------- Física ----------
@@ -199,7 +285,7 @@ function loop(now) {
     let ax = jx, ay = jy; if (keys.KeyA) ax -= 1; if (keys.KeyD) ax += 1; if (keys.KeyW) ay -= 1; if (keys.KeyS) ay += 1;
     const s = 6 * dt, c = Math.cos(P.yaw), sn = Math.sin(P.yaw);
     P.x += (c * ax + sn * ay) * s; P.z += (-sn * ax + c * ay) * s;
-    P.x = Math.max(-40, Math.min(40, P.x)); P.z = Math.max(-40, Math.min(40, P.z));
+    P.x = Math.max(-MAPH, Math.min(MAPH, P.x)); P.z = Math.max(-MAPH, Math.min(MAPH, P.z));
     collide();
     P.vy -= 20 * dt; P.y += P.vy * dt; const g = groundH(); if (P.y < g) { P.y = g; P.vy = 0; }
     if (firing) shoot();
