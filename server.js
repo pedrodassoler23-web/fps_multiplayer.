@@ -1,7 +1,12 @@
 const express = require('express'), http = require('http'), { Server } = require('socket.io');
 const app = express();
-app.use(express.static(__dirname + '/public'));
+const fs = require('fs'), path = require('path');
+const PUB = path.join(__dirname, 'public');
+const INDEX = [path.join(PUB, 'index.html'), path.join(__dirname, 'index.html')].find(f => fs.existsSync(f));
+console.log('index.html encontrado em:', INDEX || 'NENHUM LUGAR');
+app.use(express.static(PUB));
 app.get('/health', (q, r) => r.send('ok'));
+app.get('/', (q, r) => INDEX ? r.sendFile(INDEX) : r.status(500).send('ERRO: index.html nao encontrado no repositorio. Crie o arquivo public/index.html no GitHub.'));
 const srv = http.createServer(app), io = new Server(srv);
 
 // Mapa: [x, y(centro), z, largura, altura, profundidade]
@@ -11,7 +16,8 @@ const BOXES = [
   [-22, 2, -22, 8, 4, 1], [22, 2, 22, 8, 4, 1], [22, 2, -22, 1, 4, 8], [-22, 2, 22, 1, 4, 8]
 ];
 const SPAWNS = [[-10, -10], [10, 10], [-10, 10], [10, -10], [0, -20], [0, 20], [-20, 0], [20, 0]];
-const LIM = 40, DMG = 25, RATE = 140, RESPAWN = 3000;
+const LIM = 40, RESPAWN = 3000;
+const WEAP = [{ dmg: 25, rate: 150 }, { dmg: 20, rate: 110 }, { dmg: 12, rate: 70 }]; // pistola, rifle, SMG
 const rooms = {};
 
 function ray(o, d, c, s) {
@@ -55,7 +61,7 @@ io.on('connection', sock => {
   });
   sock.on('shoot', s => {
     if (!P || P.dead) return;
-    const now = Date.now(); if (now - P.last < RATE) return; P.last = now;
+    const W = WEAP[s.w | 0] || WEAP[0]; const now = Date.now(); if (now - P.last < W.rate * 0.8) return; P.last = now;
     P.x = Math.max(-LIM, Math.min(LIM, +s.x || 0)); P.z = Math.max(-LIM, Math.min(LIM, +s.z || 0)); P.y = Math.max(0, Math.min(6, +s.y || 0));
     const yaw = +s.yaw || 0, pit = Math.max(-1.5, Math.min(1.5, +s.pitch || 0));
     const o = [P.x, P.y + 1.6, P.z], d = [-Math.sin(yaw) * Math.cos(pit), Math.sin(pit), -Math.cos(yaw) * Math.cos(pit)];
@@ -67,7 +73,7 @@ io.on('connection', sock => {
     }
     io.to(P.room || [...sock.rooms][1]).emit('shot', { id: P.id, o, e: [o[0] + d[0] * bt, o[1] + d[1] * bt, o[2] + d[2] * bt] });
     if (best) {
-      best.hp -= DMG; io.to(best.id).emit('hurt', best.hp); sock.emit('hitmark');
+      best.hp -= W.dmg; io.to(best.id).emit('hurt', best.hp); sock.emit('hitmark');
       if (best.hp <= 0) {
         best.dead = true; best.d++; P.k++;
         const room = [...sock.rooms][1];
