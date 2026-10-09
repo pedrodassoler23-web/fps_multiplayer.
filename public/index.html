@@ -27,6 +27,13 @@ canvas{display:block}
 #bFire{right:24px;bottom:70px;width:84px;height:84px}
 #bJump{right:120px;bottom:30px;width:60px;height:60px;background:#2f6bff99}
 #bRel{right:120px;bottom:100px;width:60px;height:60px;background:#3a3a3a99}
+#bSwap{right:190px;bottom:30px;width:60px;height:60px;background:#7a3fd099}
+#bAim{right:190px;bottom:100px;width:60px;height:60px;background:#1a9a6a99}
+#bPause{left:24px;bottom:170px;width:46px;height:46px;background:#0008;font-size:18px}
+#pause{position:fixed;inset:0;background:#000c;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:10;padding:16px}
+#pause *{width:min(300px,100%);padding:10px;font-size:16px;border-radius:10px;border:0}
+#pause button{background:#ff7a2f;color:#fff;font-weight:700}
+#pause select{background:#222c3d;color:#fff}
 </style></head><body>
 <div id="menu">
   <h1>FPS MOBILE</h1>
@@ -41,7 +48,8 @@ canvas{display:block}
 <div class="hud" id="hp"></div><div class="hud" id="ammo"></div><div class="hud" id="cross"></div>
 <div class="hud" id="board"></div><div class="hud" id="feed"></div><div class="hud" id="info"></div><div class="hud" id="red"></div>
 <div id="joy"><div id="knob"></div></div>
-<div class="btn" id="bFire">ATIRAR</div><div class="btn" id="bJump">PULAR</div><div class="btn" id="bRel">RECARR.</div>
+<div class="btn" id="bFire">ATIRAR</div><div class="btn" id="bJump">PULAR</div><div class="btn" id="bRel">RECARR.</div><div class="btn" id="bSwap">TROCAR</div><div class="btn" id="bAim">MIRAR</div><div class="btn" id="bPause">☰</div>
+<div id="pause"><h2 style="margin:0;width:auto">Pausa</h2><label>Sensibilidade<input id="sens" type="range" min="0.3" max="2.5" step="0.1" value="1"></label><label>Gráficos<select id="qual"><option value="low">Leve (celular fraco)</option><option value="mid" selected>Médio</option><option value="high">Alto</option></select></label><button id="bResume">Continuar</button><button id="bLeave" style="background:#555">Sair da sala</button></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="/socket.io/socket.io.js"></script>
@@ -52,7 +60,9 @@ $('name').value = localStorage.nome || '';
 const qs = new URLSearchParams(location.search); if (qs.get('sala')) $('code').value = qs.get('sala');
 
 let inRoom = false, roomCode = '', myId = '', boxes = [], myTeam = -1, mode = 'ffa';
-let hp = 100, dead = false, ammo = 12, reloading = false, lastShot = 0, snap = [];
+let hp = 100, dead = false, reloading = false, lastShot = 0, snap = [], cur = 0, aim = false, sens = +(localStorage.sens || 1), paused = false;
+const WEAP = [{ n: 'Pistola', mag: 12, rate: 150, c: 0x222222, s: [0.1, 0.12, 0.4], f: 120 }, { n: 'Rifle', mag: 30, rate: 110, c: 0x3a4a2a, s: [0.1, 0.12, 0.75], f: 90 }, { n: 'SMG', mag: 40, rate: 70, c: 0x2a2a55, s: [0.1, 0.14, 0.5], f: 150 }];
+const ammos = [12, 30, 40];
 const P = { x: 0, y: 0, z: 0, vy: 0, yaw: 0, pitch: 0 };
 let jx = 0, jy = 0, firing = false;
 
@@ -125,7 +135,7 @@ sock.on('shot', s => {
 });
 sock.on('hurt', h => { $('red').style.opacity = .5; setTimeout(() => $('red').style.opacity = 0, 150); if (h <= 0) { dead = true; $('hp').textContent = '☠ Respawn em 3s'; } });
 sock.on('hitmark', () => { $('cross').style.borderColor = '#f33'; setTimeout(() => $('cross').style.borderColor = '#fff8', 100); beep(900, .04); });
-sock.on('respawn', r => { P.x = r.x; P.z = r.z; P.y = 0; P.vy = 0; dead = false; ammo = 12; updAmmo(); });
+sock.on('respawn', r => { P.x = r.x; P.z = r.z; P.y = 0; P.vy = 0; dead = false; ammos[0] = 12; ammos[1] = 30; ammos[2] = 40; updAmmo(); });
 sock.on('feed', t => { const d = document.createElement('div'); d.textContent = t; $('feed').appendChild(d); setTimeout(() => d.remove(), 4000); });
 
 // ---------- Som ----------
@@ -135,32 +145,41 @@ let ac; function beep(f, d) { try { ac = ac || new (window.AudioContext || windo
 const joy = $('joy'), knob = $('knob'); let joyId = null, lookId = null, lx = 0, ly = 0;
 function joyMove(t) { const r = joy.getBoundingClientRect(); let dx = t.clientX - (r.left + 65), dy = t.clientY - (r.top + 65); const m = Math.hypot(dx, dy), max = 55; if (m > max) { dx *= max / m; dy *= max / m; } knob.style.transform = `translate(${dx}px,${dy}px)`; jx = dx / max; jy = dy / max; }
 joy.addEventListener('touchstart', e => { e.preventDefault(); joyId = e.changedTouches[0].identifier; joyMove(e.changedTouches[0]); }, { passive: false });
-document.addEventListener('touchstart', e => { for (const t of e.changedTouches) { if (t.target.closest('#menu,.btn,#joy,#info')) continue; if (lookId === null && t.clientX > innerWidth / 2) { lookId = t.identifier; lx = t.clientX; ly = t.clientY; } } }, { passive: false });
+document.addEventListener('touchstart', e => { for (const t of e.changedTouches) { if (t.target.closest('#menu,.btn,#joy,#info,#pause')) continue; if (lookId === null && t.clientX > innerWidth / 2) { lookId = t.identifier; lx = t.clientX; ly = t.clientY; } } }, { passive: false });
 document.addEventListener('touchmove', e => {
-  e.preventDefault();
+  if (!e.target.closest('#pause')) e.preventDefault();
   for (const t of e.changedTouches) {
     if (t.identifier === joyId) joyMove(t);
-    if (t.identifier === lookId) { P.yaw -= (t.clientX - lx) * 0.006; P.pitch = Math.max(-1.4, Math.min(1.4, P.pitch - (t.clientY - ly) * 0.006)); lx = t.clientX; ly = t.clientY; }
+    if (t.identifier === lookId) { P.yaw -= (t.clientX - lx) * 0.006 * sens * (aim ? .55 : 1); P.pitch = Math.max(-1.4, Math.min(1.4, P.pitch - (t.clientY - ly) * 0.006 * sens * (aim ? .55 : 1))); lx = t.clientX; ly = t.clientY; }
   }
 }, { passive: false });
 document.addEventListener('touchend', e => { for (const t of e.changedTouches) { if (t.identifier === joyId) { joyId = null; jx = jy = 0; knob.style.transform = ''; } if (t.identifier === lookId) lookId = null; } });
 const hold = (id, on, off) => { const el = $(id); el.addEventListener('touchstart', e => { e.preventDefault(); on(); }, { passive: false }); el.addEventListener('touchend', e => { e.preventDefault(); off && off(); }); };
 hold('bFire', () => firing = true, () => firing = false);
 hold('bJump', () => { if (P.y <= groundH() + .01) P.vy = 7; });
-hold('bRel', reload);
+hold('bRel', reload); hold('bSwap', swap); hold('bAim', toggleAim);
+hold('bPause', () => { paused = true; firing = false; $('pause').style.display = 'flex'; });
+$('bResume').onclick = () => { paused = false; $('pause').style.display = 'none'; };
+$('bLeave').onclick = () => location.reload();
+$('sens').value = sens; $('sens').oninput = e => { sens = +e.target.value; localStorage.sens = sens; };
+function setQual(q) { renderer.setPixelRatio(q === 'low' ? 0.7 : q === 'mid' ? 1 : 1.5); renderer.setSize(innerWidth, innerHeight); scene.fog.far = q === 'low' ? 45 : 70; }
+$('qual').value = localStorage.qual || 'mid'; $('qual').onchange = e => { localStorage.qual = e.target.value; setQual(e.target.value); }; setQual($('qual').value);
+function applyGun() { gun.geometry.dispose(); gun.geometry = new THREE.BoxGeometry(...WEAP[cur].s); gun.material.color.setHex(WEAP[cur].c); }
+function swap() { cur = (cur + 1) % 3; reloading = false; applyGun(); updAmmo(); }
+function toggleAim() { aim = !aim; cam.fov = aim ? 45 : 75; cam.updateProjectionMatrix(); $('bAim').style.outline = aim ? '3px solid #fff' : ''; }
 // teclado/mouse para testar no PC
 const keys = {}; addEventListener('keydown', e => { keys[e.code] = 1; if (e.code === 'Space' && P.y <= groundH() + .01) P.vy = 7; if (e.code === 'KeyR') reload(); });
 addEventListener('keyup', e => keys[e.code] = 0);
 addEventListener('mousedown', () => { if (inRoom) firing = true; }); addEventListener('mouseup', () => firing = false);
 addEventListener('mousemove', e => { if (e.buttons & 2) { P.yaw -= e.movementX * .004; P.pitch = Math.max(-1.4, Math.min(1.4, P.pitch - e.movementY * .004)); } });
 
-function updAmmo() { $('ammo').textContent = reloading ? 'Recarregando...' : `🔫 ${ammo}/12`; }
-function reload() { if (reloading || ammo === 12) return; reloading = true; updAmmo(); setTimeout(() => { ammo = 12; reloading = false; updAmmo(); }, 1200); }
+function updAmmo() { $('ammo').textContent = reloading ? 'Recarregando...' : `${WEAP[cur].n} ${ammos[cur]}/${WEAP[cur].mag}`; }
+function reload() { const w = cur; if (reloading || ammos[w] === WEAP[w].mag) return; reloading = true; updAmmo(); setTimeout(() => { ammos[w] = WEAP[w].mag; if (cur === w) reloading = false; updAmmo(); }, 1300); }
 function shoot() {
-  const n = performance.now(); if (dead || reloading || n - lastShot < 160) return; lastShot = n;
-  if (ammo <= 0) { reload(); return; }
-  ammo--; updAmmo(); beep(120, .08); gun.position.z = -0.42;
-  sock.emit('shoot', { x: P.x, y: P.y, z: P.z, yaw: P.yaw, pitch: P.pitch });
+  const n = performance.now(); if (dead || reloading || paused || n - lastShot < WEAP[cur].rate) return; lastShot = n;
+  if (ammos[cur] <= 0) { reload(); return; }
+  ammos[cur]--; updAmmo(); beep(WEAP[cur].f, .08); gun.position.z = -0.42; if (cur === 0) firing = false;
+  sock.emit('shoot', { x: P.x, y: P.y, z: P.z, yaw: P.yaw, pitch: P.pitch, w: cur });
 }
 
 // ---------- Física ----------
