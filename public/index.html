@@ -648,35 +648,3 @@ function loop(now) {
 applyTheme('base'); applyQuality();
 wb[0].classList.add('on'); applyModel(); updAmmo(); hud(); requestAnimationFrame(loop);
 </script></body></html>
-<!DOCTYPE html>
-<html lang="pt-BR"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>FPS Mobile</title>
-<style>
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;touch-action:none}
-html,body{margin:0;height:100%;overflow:hidden;background:#111;font-family:system-ui,sans-serif;color:#fff}
-canvas{display:block}
-#menu{position:fixed;inset:0;background:#10151f;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:16px;z-index:9;overflow:auto}
-#menu h1{margin:0 0 6px;font-size:28px;color:#ff7a2f}
-#menu input,#menu select,#menu button{width:min(320px,100%);padding:12px;font-size:16px;border-radius:10px;border:0}
-#menu input,#menu select{background:#222c3d;color:#fff}
-#menu button{background:#ff7a2f;color:#fff;font-weight:700}
-#menu button.alt{background:#2f6bff}
-#msg{color:#ffb4b4;min-height:20px;font-size:14px}
-.hud{position:fixed;pointer-events:none;z-index:5}
-#hp{left:12px;top:10px;font-size:18px;font-weight:700;text-shadow:0 1px 3px #000}
-#ammo{right:12px;bottom:12px;font-size:20px;font-weight:700}
-#cross{left:50%;top:50%;width:14px;height:14px;margin:-7px;border:2px solid #fff8;border-radius:50%}
-#board{right:10px;top:8px;font-size:12px;background:#0007;padding:6px 8px;border-radius:8px;min-width:130px}
-#feed{left:12px;top:40px;font-size:12px;text-shadow:0 1px 2px #000}
-#info{left:50%;top:6px;transform:translateX(-50%);font-size:12px;background:#0007;padding:3px 8px;border-radius:8px}
-#red{inset:0;background:#f00;opacity:0;transition:opacity .25s}
-#vig{inset:0;z-index:4;background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.45) 100%)}
-#joy{position:fixed;left:24px;bottom:24px;width:130px;height:130px;border-radius:50%;background:#fff2;border:2px solid #fff4;z-index:6}
-#knob{position:absolute;left:40px;top:40px;width:50px;height:50px;border-radius:50%;background:#fff7}
-.btn{position:fixed;z-index:6;border-radius:50%;background:#ff3b3b99;border:2px solid #fff6;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px}
-#bFire{right:24px;bottom:70px;width:84px;height:84px}
-#bJump{right:120px;bottom:30px;width:60px;height:60px;background:#2f6bff99}
-#bRel{right:120px;bottom:100px;width:60px;height:60px;background:#3a3a3a99}
-</style></head><body>
-<div id="menu">
